@@ -1,0 +1,50 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+usage() {
+    echo "Usage: $0 [fasta|log|all]"
+    echo "Remove fasta, log or all files from results directory"
+    echo "fasta: remove fasta files"
+    echo "db : remove db files"
+    echo "log: remove log files"
+    echo "all: remove all files"
+}
+
+if [ $# -ne 1 ]; then
+    usage
+    exit 1
+fi
+
+case $1 in 
+    "fasta")
+        echo "Removing fasta files" 
+        rm results/db_fasta.txt
+        rm results/new_fasta.txt
+        ;;
+    "log")
+        echo "removing log files"
+        rm results/find_best_match.log
+        rm results/warnings.log
+        ;;
+    "db")
+        echo " removing all db files"
+        if [ -e "results/blast_db" ]; then
+            rm results/db*
+        else
+            echo "blast_db directory does not exist"
+        fi
+        ;;
+    "all")
+        echo "Removing all files"
+        if [ -d "results/" ]; then
+            rm -r "results"/*
+        else
+            echo "results directory does not exist"
+        fi
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
+
