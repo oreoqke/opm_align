@@ -2,6 +2,10 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.pairwise2 import align
 import time
+'''This file contains functions to align proteins by sequence using BioPython. 
+This works a lot slower than using blastp, so I ended up not using this.'''
+
+
 
 def format_time(seconds):
     """

@@ -6,6 +6,8 @@ import get_all_pdbid
 import subprocess
 import pandas as pd
 import align_structures
+'''The part that does USalign was made posssible by the generous contribution of Stanislav Cherepanov'''
+
 
 def align_sequences(output_dir, logger):
     # read in the data frame from the alignment
@@ -23,23 +25,45 @@ def align_sequences(output_dir, logger):
     # For each target value, get the best match
     to_align = []
     targets = open(os.path.join(output_dir, "new_pdb.txt"), "r").read().splitlines()
+    # accepts valid index i and filtered data frame
+    # returns whether the pair of pdbids should be used for structure alignment
+    def write_bad_match(output_dir, info):
+        with open(os.path.join(output_dir, "bad_matches.txt"), "a") as f:
+            f.write(f"{info}\n")    
+    
     for target in targets:
         filtered_df = df[df[0] == target]
         filtered_df = filtered_df.sort_values(by=2, ascending=False)
         if filtered_df.empty:
-            print(f"No match found for {target}")
-            logger.warning(f"No match found for {target}")
+            print(f"No match found for {target} by BLAST")
+            logger.warning(f"No match found for {target} by BLAST")
+            write_bad_match(output_dir, f"{target} No match found by BLAST")
             continue
         i = 0
-        
-        while filtered_df.shape[0] != i and filtered_df.iloc[i, 2] >= filtered_df.iloc[0, 2]-10:
+
+        def criteria_for_usalign(filtered_df, i):
+            # if the best sequence alignment is less than 15% don't bother aligning
+            # write down this entry
+            if filtered_df.iloc[0, 2] < 15:
+                write_bad_match(output_dir, filtered_df.iloc[0])
+                return False
+            # if the best sequence alignment is better than 30% align only the best value
+            elif filtered_df.iloc[0, 2] > 30:
+                return (filtered_df.iloc[i, 2] == filtered_df.iloc[0, 2])
+            # if the best value is between 15 and 30% align the best values within 5% range
+            else:
+                return filtered_df.iloc[i, 2] >= filtered_df.iloc[0, 2]-5
+
+        # This loop will determine the pairs for which to run the alignment
+        while filtered_df.shape[0] != i and criteria_for_usalign(filtered_df, i):
             to_align.append(filtered_df.iloc[i])
             i += 1
         #print(target)
         #print(filtered_df)
     with open(os.path.join(output_dir, "to_align.txt"), "w") as f:
         for line in to_align:
-            f.write(f"{line[0]} {line[1]} {line[2]}\n")
+            f.write(f"{line[0]} {line[1]} {line[2]} {line[3]}\n")
+           
 
 
 @click.command()
@@ -54,8 +78,7 @@ def main(input, output, output_dir):
     """This funciton accepts a list of pdb ids and finds the best match for each one from the database.
     It first runs the alignment by sequence and then by structure for the best match.
     It then writes the results into a results directory."""
-    
-    
+      
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
         click.echo(f"Directory '{output_dir}' created")
@@ -81,6 +104,8 @@ def main(input, output, output_dir):
     cmd = f"cp {input} {os.path.join(output_dir, 'new_pdb.txt')}"
     subprocess.run(cmd, shell=True)
     
+    # if you don't provide a reference list, it will take all the ids from
+    # the existing opm database
     opm_pdb_ids = os.path.join(output_dir, "opm_pdbid.txt")
     if not os.path.exists(os.path.join(output_dir, "opm_pdbid.txt")):
         # Get the updataed list of pdb ids from the database
@@ -106,7 +131,9 @@ def main(input, output, output_dir):
         logger.warning(res.stderr)
         
     # Now we can run the sequence alignment
-    command = f'blastp -query {new_fasta} -db {db_path} -outfmt "6 qseqid sseqid pident" -out {output_path}'
+    # for more information on the command see the blastp documentation
+    # https://www.ncbi.nlm.nih.gov/books/NBK279684/table/appendices.T.options_common_to_all_blast/
+    command = f'blastp -query {new_fasta} -db {db_path} -outfmt "6 qseqid sseqid pident length" -out {output_path}'
     res = subprocess.run(command, shell=True, capture_output=True, text=True)
     # Print logs and capture any errors
     print(res.stdout)

@@ -110,10 +110,11 @@ def run_align(pdb_folder, options, target, ref):
                 Nsub_over += 1
                 star = False
                     
-        P_over = round(100 * N_over / min(l_1, l_2), 2)
-        P_seqide = round(100 * N_identical / N_over, 2)
-        P_identical_1 = round(100 * N_identical / l_1, 2)
-        P_identical_2 = round(100 * N_identical / l_2, 2)                        
+        P_over = round(100 * N_over / min(l_1, l_2))
+        P_seqide = round(100 * N_identical / N_over)
+        rmsd = round(rmsd, 2)
+        P_identical_1 = round(100 * N_identical / l_1)
+        P_identical_2 = round(100 * N_identical / l_2)                        
         
         # Append the extracted information to the data frame as a new row
         to_add = pd.DataFrame([[target, chain_1, ref, chain_2, l_1, l_2, score_1, score_2, d0_1, d0_2, rmsd, Lali, seqid_1, seqid_2, seqid_ali, N_over, N_identical, P_over, P_seqide, P_identical_1, P_identical_2, Nsub_over]], columns=result_df_1.columns)
@@ -204,7 +205,7 @@ def align_structures(output_dir, logger):
                                   'TM-score_1', 'TM-score_2', 'd0_1', 'd0_2', 
                                   'RMSD', 'Lali', 'seqid_1', 'seqid_2','seqid_ali', 
                                   'N_over', 'N_ide', 'P_over', 'P_seqide', 'P_ide_1', 
-                                  'P_ide_2', 'Nsub_over'])
+                                  'P_ide_2', 'Nsub_over', 'seq_ide_blast', 'length_blast'])
     
     # if os.path.isfile(os.path.join(output_dir, "result.csv")):
     #     result_df = pd.read_csv(os.path.join(output_dir, "result.csv"), header=None, sep="\t")
@@ -237,16 +238,19 @@ def align_structures(output_dir, logger):
     result_df.to_csv(f'{output_dir}/results.csv', mode='a', index=False)
 
     # Count the total number of references
-    def process_reference(target, ref):
+    def process_reference(target, ref, seq_ide_blast, length_blast):
         resultat = run_align(pdb_folder, options, target, ref)
+        # add the seq_ide_blast to the result
+        resultat['seq_ide_blast'] = seq_ide_blast
+        resultat['length_blast'] = length_blast
         results_queue.put(resultat)
 
-
+    # This creates a pool of workers, consider using a smaller number of workers if you need to run other tasks
     with concurrent.futures.ThreadPoolExecutor(max_workers=psutil.cpu_count(logical=False)) as executor:
         futures = []
         for target in target_list:
-            target, ref, garbage = target.split()
-            futures.append(executor.submit(process_reference, target, ref))
+            target, ref, seq_ide_blast, length_blast = target.split()
+            futures.append(executor.submit(process_reference, target, ref, seq_ide_blast, length_blast))
         
         for future in concurrent.futures.as_completed(futures):
             overall_progress.update(1)
