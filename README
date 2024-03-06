@@ -1,0 +1,23 @@
+# Protein Matcher
+
+Protein Matcher is a tool designed to find the closest matches a new pdb in the opm database. This README provides an overview of the project, instructions for installation, and guidelines for usage.
+
+## Table of Contents
+
+- [Introduction](#introduction)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Introduction
+
+Protein Matcher utilizes [ncbi-blast-2.15.0+](https://blast.ncbi.nlm.nih.gov/doc/blast-help/downloadblastdata.html) to efficiently search through a local database of protein sequences and identify the closest matches in terms of their primary sequence. 
+
+## Installation
+
+To install and set up Protein Matcher, follow these steps:
+
+1. Clone the repository to your local machine:
+
+
