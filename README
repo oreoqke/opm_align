@@ -19,5 +19,14 @@ Protein Matcher utilizes [ncbi-blast-2.15.0+](https://blast.ncbi.nlm.nih.gov/doc
 To install and set up Protein Matcher, follow these steps:
 
 1. Clone the repository to your local machine:
+git clone: git@github.com:oreoqke/opm_align.git
+
+2. Install the ncbi balst and choose the appropriate version for your system:
+https://blast.ncbi.nlm.nih.gov/doc/blast-help/downloadblastdata.html
+Don't forget to add to the path.
+
+
+3. Install USalign:
+https://zhanggroup.org/US-align/help/
 
 

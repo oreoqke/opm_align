@@ -1,2 +1,8 @@
 click==8.1.7
 psutil==5.8.0
+click
+pandas
+tqdm
+biopython
+requests
+psycopg2

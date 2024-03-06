@@ -31,6 +31,7 @@ def align_sequences(output_dir, logger):
             logger.warning(f"No match found for {target}")
             continue
         i = 0
+        
         while filtered_df.shape[0] != i and filtered_df.iloc[i, 2] >= filtered_df.iloc[0, 2]-10:
             to_align.append(filtered_df.iloc[i])
             i += 1
