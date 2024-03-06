@@ -31,14 +31,14 @@ def align_sequences(output_dir, logger):
             logger.warning(f"No match found for {target}")
             continue
         i = 0
-        while filtered_df.shape[0] != i and filtered_df.iloc[i, 2] == filtered_df.iloc[0, 2]:
-            to_align.append([filtered_df.iloc[i, 0], filtered_df.iloc[i, 1]])
+        while filtered_df.shape[0] != i and filtered_df.iloc[i, 2] >= filtered_df.iloc[0, 2]-10:
+            to_align.append(filtered_df.iloc[i])
             i += 1
         #print(target)
         #print(filtered_df)
     with open(os.path.join(output_dir, "to_align.txt"), "w") as f:
         for line in to_align:
-            f.write(f"{line[0]} {line[1]}\n")
+            f.write(f"{line[0]} {line[1]} {line[2]}\n")
 
 
 @click.command()
@@ -80,9 +80,10 @@ def main(input, output, output_dir):
     cmd = f"cp {input} {os.path.join(output_dir, 'new_pdb.txt')}"
     subprocess.run(cmd, shell=True)
     
-    # Get the updataed list of pdb ids from the database
     opm_pdb_ids = os.path.join(output_dir, "opm_pdbid.txt")
-    get_all_pdbid.get_all_pdbid(output_file=opm_pdb_ids)
+    if not os.path.exists(os.path.join(output_dir, "opm_pdbid.txt")):
+        # Get the updataed list of pdb ids from the database
+        get_all_pdbid.get_all_pdbid(output_file=opm_pdb_ids)
     
     
     # Now check if the db fasta files are already in the output
