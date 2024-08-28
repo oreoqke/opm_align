@@ -6,8 +6,27 @@ import get_all_pdbid
 import subprocess
 import pandas as pd
 import align_structures
+import transmembrane_region as tr
 '''The part that does USalign was made posssible by the generous contribution of Stanislav Cherepanov'''
-
+def write_bad_match(output_dir, info):
+    with open(os.path.join(output_dir, "bad_matches.txt"), "a") as f:
+        f.write(f"{info}\n")
+        
+def criteria_for_usalign(output_dir, filtered_df, i):
+    ''' accepts valid output directory, index i, and filtered data frame
+    returns whether the pair of pdbids should be used for structure alignment'''
+    # if the best sequence alignment is less than 15% don't bother aligning
+    # write down this entry
+    if filtered_df.iloc[0, 2] < 15:
+        write_bad_match(output_dir, filtered_df.iloc[0])
+        return False
+    # if the best sequence alignment is better than 30% align only the best value
+    elif filtered_df.iloc[0, 2] > 30:
+        return (filtered_df.iloc[i, 2] == filtered_df.iloc[0, 2])
+    # if the best value is between 15 and 30% align the best values within 5% range
+    else:
+        return filtered_df.iloc[i, 2] >= filtered_df.iloc[0, 2]-5
+    
 
 def align_sequences(output_dir, logger):
     # read in the data frame from the alignment
@@ -16,50 +35,64 @@ def align_sequences(output_dir, logger):
     # I'm using aligment score as the similarity measure, so I know which 3d structures
     # are likely to be most similar. I will try to find the best match from any subunit to any subunit
     # of the target protein.
-    df = df.map(lambda x: x.lower() if isinstance(x, str) else x)
-    df = df.map(lambda x: x[:4] if isinstance(x, str) else x)
-    # multisubunit proteins will result in duplicate matches
-    # This is needed because we don't care about different subunits
-    df = df.drop_duplicates()
+    df = df.map(lambda x: x.upper() if isinstance(x, str) else x)
+    
+    # cuts off everything except for the pdb id and the subunit
+    df = df.map(lambda x: x.split('|')[0] if isinstance(x, str) else x)
 
     # For each target value, get the best match
     to_align = []
     targets = open(os.path.join(output_dir, "new_pdb.txt"), "r").read().splitlines()
-    # accepts valid index i and filtered data frame
-    # returns whether the pair of pdbids should be used for structure alignment
-    def write_bad_match(output_dir, info):
-        with open(os.path.join(output_dir, "bad_matches.txt"), "a") as f:
-            f.write(f"{info}\n")    
     
-    for target in targets:
-        filtered_df = df[df[0] == target]
+    # Convert all targets to uppercase to match the dictionary
+    upper_targets = [target.upper() for target in targets]
+    
+    # Get the transmembrane subunit with the most transmembrane regions
+    longest_subs = tr.longest_sub(targets)        
+    
+    # Filter the data frame for the best match for each target
+    for target in upper_targets:
+        # If the target does not have any transmembrane regions, we only filter by the 
+        # sequence alignment score
+        # TODO: I am not sure if this would ever be the case. Need to be tested
+        if target not in longest_subs:
+            filtered_df = df.map(lambda x: x[:4] if isinstance(x, str) else x)
+            filtered_df = filtered_df[filtered_df[0] == target]
+        # Take the subunit with the most transmembrane regions and drop other ones from the data frame
+        else:
+            memb_subunit = longest_subs[target]["subunit"]
+            if memb_subunit is not None:
+                filtered_df = df[df[0] == f"{target}_{memb_subunit}"]
+                filtered_df = filtered_df.map(lambda x: x[:4] if isinstance(x, str) else x)
+                print(f"Filtering for {target}_{memb_subunit}")
+                print(filtered_df)
+            # If the target does not have any transmembrane regions, we only filter by the 
+            # sequence alignment score
+            else:
+                filtered_df = df.map(lambda x: x[:4] if isinstance(x, str) else x)
+                print(filtered_df)
+                filtered_df = filtered_df[filtered_df[0] == target]
+                print(f"Filtering for {target}_{memb_subunit}")
+                print(filtered_df)
+                
+        # Drop duplicates if there are any
+        # This might happen if we don't have any information about the subunit
+        filtered_df = filtered_df.drop_duplicates()
         filtered_df = filtered_df.sort_values(by=2, ascending=False)
+        
+        # Write a helpful message that no matches were found
         if filtered_df.empty:
             print(f"No match found for {target} by BLAST")
             logger.warning(f"No match found for {target} by BLAST")
             write_bad_match(output_dir, f"{target} No match found by BLAST")
             continue
         i = 0
-
-        def criteria_for_usalign(filtered_df, i):
-            # if the best sequence alignment is less than 15% don't bother aligning
-            # write down this entry
-            if filtered_df.iloc[0, 2] < 15:
-                write_bad_match(output_dir, filtered_df.iloc[0])
-                return False
-            # if the best sequence alignment is better than 30% align only the best value
-            elif filtered_df.iloc[0, 2] > 30:
-                return (filtered_df.iloc[i, 2] == filtered_df.iloc[0, 2])
-            # if the best value is between 15 and 30% align the best values within 5% range
-            else:
-                return filtered_df.iloc[i, 2] >= filtered_df.iloc[0, 2]-5
-
         # This loop will determine the pairs for which to run the alignment
-        while filtered_df.shape[0] != i and criteria_for_usalign(filtered_df, i):
+        while filtered_df.shape[0] !=i and criteria_for_usalign(output_dir, filtered_df, i):
+            print(filtered_df.iloc[i])
             to_align.append(filtered_df.iloc[i])
             i += 1
-        #print(target)
-        #print(filtered_df)
+    
     with open(os.path.join(output_dir, "to_align.txt"), "w") as f:
         for line in to_align:
             f.write(f"{line[0]} {line[1]} {line[2]} {line[3]}\n")

@@ -1,0 +1,11 @@
+7XZH: {'uniprot': ['Q8IWT6'], 'num_transmembrane': 4, 'subunit': 1}
+7XTG: {'uniprot': ['Q38YH6'], 'num_transmembrane': 6, 'subunit': 3}
+7XXH: {'uniprot': ['P47900'], 'num_transmembrane': 7, 'subunit': 1}
+7XXI: {'uniprot': ['Q9H244'], 'num_transmembrane': 7, 'subunit': 1}
+7XZH: {'uniprot': ['Q8IWT6'], 'num_transmembrane': 4, 'subunit': 1}
+7Y3G: {'uniprot': ['P47775'], 'num_transmembrane': 7, 'subunit': 5}
+8A44: {'uniprot': ['Q16570'], 'num_transmembrane': 7, 'subunit': 2}
+8A9Y: {'uniprot': None, 'num_transmembrane': 0, 'subunit': None}
+8AA0: {'uniprot': None, 'num_transmembrane': 0, 'subunit': None}
+8AA1: {'uniprot': None, 'num_transmembrane': 0, 'subunit': None}
+8AA2: {'uniprot': None, 'num_transmembrane': 0, 'subunit': None}

@@ -3,7 +3,7 @@ import psycopg2
 the primary structures table'''
 
 # You may need to set the dbname accordignly and specify the user if needed
-def get_all_pdbid(dbname="lomize-opm", output_file="opm_pdbid.txt"):
+def get_all_pdbid(dbname="lomize-opm_development", output_file="opm_pdbid.txt"):
     # Connect to the database
     conn = psycopg2.connect(
         dbname=dbname,
