@@ -21,20 +21,20 @@ def download_fasta_from_pdb(pdb_ids, logger):
         elif response.status_code == 404:
             logger.warning(f"FASTA not found for PDB ID: {pdb_id}, status code: " 
                            f"{response.status_code} \n Response: {response.text}")
-            print(f"FASTA not found for PDB ID: {pdb_id}")
+            # print(f"FASTA not found for PDB ID: {pdb_id}")
             fasta_sequences[pdb_id] = None
         elif response.status_code == 429:
             logger.warning(f"Access to FASTA for PDB ID: {pdb_id}" 
                            " is forbidden due to too many requests")
-            print(f"Access to FASTA for PDB ID: {pdb_id}" 
-                           " is forbidden due to too many requests")
+            # print(f"Access to FASTA for PDB ID: {pdb_id}" 
+            #                " is forbidden due to too many requests")
             # This can be adjusted if we need to increase the pause
             time.sleep(5)
             download(pdb_id)
         else:
             logger.warning(f"Failed to download FASTA for PDB ID: {pdb_id}, status code: " 
                            f"{response.status_code} \n Response: {response.text}")
-            print(f"Failed to download FASTA for PDB ID: {pdb_id}")
+            # print(f"Failed to download FASTA for PDB ID: {pdb_id}")
             fasta_sequences[pdb_id] = None
             
     # max_workers can be further reduced in case the server is overwhelmed and responds with 429

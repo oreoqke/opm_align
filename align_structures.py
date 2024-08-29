@@ -18,6 +18,10 @@ warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenati
 
 
 def input_parser():
+    '''This function parses the input arguments and sets the parameters for the superposition.
+    It is not used in the final version of the code because the parameters are set in the main function.
+    Using this will cause an error because it will try to parse the arguments from the previous call 
+    of the main function.'''
     parser = argparse.ArgumentParser(
         description='Superposition OPM structures')
     # Lists of reference and target structures as pdbids
@@ -53,6 +57,7 @@ def run_align(pdb_folder, options, target, ref):
     # Run USalign and get the output
     pipe = os.popen(f'./USalign {pdb_folder}/{target}.cif {pdb_folder}/{ref}.cif -outfmt 1 {options} 2>/dev/null')
     output_splits = pipe.read()
+    print(output_splits)
     pipe.close()
     result_df_1 = pd.DataFrame(columns=['PDB_ID_1', 'chain_1', 'PDB_ID_2', 
                                   'chain_2', 'length_1', 'length_2', 
@@ -142,17 +147,22 @@ def write_results_to_file(output_dir):
             continue
 
 
-def align_structures(output_dir, logger):
+def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_over_family=25,
+                    P_ide_family=50, rmsd_same=2.0, mode='3', rmsd_max=5.0):
     """Align the structures using the superposition algorithm."""
-    args = input_parser()
+    print(f"Mode: {mode}")
+    # This function is needed to parse the input arguments and set the parameters for the superposition
+    # But it is not needed in the final version of the code because the parameters are set in the main function
+    # args = input_parser()
     exe = "USalign"
-    P_over_protein = args.P_over_protein
-    P_over_family = args.P_over_family
-    P_ide_protein = args.P_ide_protein
-    P_ide_family = args.P_ide_family
-    rmsd_same = args.rmsd_same
-    rmsd_max = args.rmsd_max
-    mode = args.mode
+    
+    # P_over_protein = args.P_over_protein
+    # P_over_family = args.P_over_family
+    # P_ide_protein = args.P_ide_protein
+    # P_ide_family = args.P_ide_family
+    # rmsd_same = args.rmsd_same
+    # rmsd_max = args.rmsd_max
+    # mode = args.mode
     
     
     start_time = time.time()
@@ -169,6 +179,7 @@ def align_structures(output_dir, logger):
     elif mode == '2':
         options = '-ter 1 -byresi 0'
     elif mode == '3':
+        print('Mode 3')
         options = '-ter 1 -mm 1'
     else:
         options = mode
@@ -183,8 +194,8 @@ def align_structures(output_dir, logger):
     pdb_folder = os.path.join(output_dir, "pdb")
     if os.path.isdir(pdb_folder) is False:
         os.mkdir(pdb_folder)
-    #print(target_list)
-    #print(ref_list)
+    # print(target_list)
+    # print(ref_list)
     
     # Fetch mmCIF files from RCSB
     for i in tqdm(range(len(all_pdb)), desc='\033[94m'+'Downloading mmCIF files from RCSB' + '\033[0m', disable=None, leave=False):
@@ -214,16 +225,6 @@ def align_structures(output_dir, logger):
     target_list = open(os.path.join(output_dir, "to_align.txt"), "r").read().splitlines()
     
     
-    # This is a single thread version that may take longer than your PhD to compute
-    # for target in tqdm(target_list, desc='\033[94m'+'Performing superposition using USalign'+ '\033[0m',disable=None, postfix='targets', leave = False):        # Iterate over the elements of ref_list
-    #     ref, target = target.split()
-    #     target_time = time.time()
-    #     # for ref in tqdm(ref_list, leave = False, disable=None, postfix='references'):
-    #     result_df = run_align(pdb_folder, output_dir, options, result_df, to_skip, target, ref)  
-    #     if not sys.stdout.isatty(): sys.stdout.flush()
-
-
-
     # Start the writer thread
     writer_thread = threading.Thread(target=write_results_to_file, args=(output_dir,))
     writer_thread.start()
@@ -239,6 +240,8 @@ def align_structures(output_dir, logger):
 
     # Count the total number of references
     def process_reference(target, ref, seq_ide_blast, length_blast):
+        print(f'Processing {target} and {ref}, seq_ide_blast: {seq_ide_blast}, length_blast: {length_blast}')
+        print(options, pdb_folder, target, ref)
         resultat = run_align(pdb_folder, options, target, ref)
         # add the seq_ide_blast to the result
         resultat['seq_ide_blast'] = seq_ide_blast

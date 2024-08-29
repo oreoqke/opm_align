@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import click
 import os
 import logging
@@ -48,7 +49,7 @@ def align_sequences(output_dir, logger):
     upper_targets = [target.upper() for target in targets]
     
     # Get the transmembrane subunit with the most transmembrane regions
-    longest_subs = tr.longest_sub(targets)        
+    longest_subs = tr.longest_sub(targets, logger)        
     
     # Filter the data frame for the best match for each target
     for target in upper_targets:
@@ -64,16 +65,19 @@ def align_sequences(output_dir, logger):
             if memb_subunit is not None:
                 filtered_df = df[df[0] == f"{target}_{memb_subunit}"]
                 filtered_df = filtered_df.map(lambda x: x[:4] if isinstance(x, str) else x)
-                print(f"Filtering for {target}_{memb_subunit}")
-                print(filtered_df)
+                # debug prints
+                # print(f"Filtering for {target}_{memb_subunit}")
+                # print(filtered_df)
             # If the target does not have any transmembrane regions, we only filter by the 
             # sequence alignment score
             else:
                 filtered_df = df.map(lambda x: x[:4] if isinstance(x, str) else x)
-                print(filtered_df)
+                # debug prints
+                # print(filtered_df)
                 filtered_df = filtered_df[filtered_df[0] == target]
-                print(f"Filtering for {target}_{memb_subunit}")
-                print(filtered_df)
+                # debug prints
+                # print(f"Filtering for {target}_{memb_subunit}")
+                # print(filtered_df)
                 
         # Drop duplicates if there are any
         # This might happen if we don't have any information about the subunit
@@ -82,14 +86,14 @@ def align_sequences(output_dir, logger):
         
         # Write a helpful message that no matches were found
         if filtered_df.empty:
-            print(f"No match found for {target} by BLAST")
+            # print(f"No match found for {target} by BLAST")
             logger.warning(f"No match found for {target} by BLAST")
             write_bad_match(output_dir, f"{target} No match found by BLAST")
             continue
         i = 0
         # This loop will determine the pairs for which to run the alignment
         while filtered_df.shape[0] !=i and criteria_for_usalign(output_dir, filtered_df, i):
-            print(filtered_df.iloc[i])
+            # print(filtered_df.iloc[i])
             to_align.append(filtered_df.iloc[i])
             i += 1
     
@@ -107,7 +111,21 @@ def align_sequences(output_dir, logger):
               type=click.Path(), help="Specify output file, default is result.csv", required=False)
 @click.option("--output-dir", "-d", default="results",
               type=click.Path(), help="Specify output directory, default is results", required=False)
-def main(input, output, output_dir):
+@click.option("--p_over_protein", default=95, type=int,
+              help="Minimal percentage of overlapped residues in the superposition (same protein)", required=False)
+@click.option("--p_ide_protein", default=98, type=int,
+              help="Minimal percentage of identity (same protein)")
+@click.option("--p_over_family", default=25, type=int,
+              help="Minimal percentage of overlapped residues in the superposition (same family)")
+@click.option("--p_ide_family", default=50, type=int,
+              help="Minimal percentage of identity (same family)")
+@click.option("--rmsd_same", default=2.0, type=float,
+              help= "Maximal RMSD for the same protein")
+@click.option("--mode", default="3" , type=str,
+                help="Mode of superposition: Mode of superposition 1: -ter 1 -byresi 1 2: -ter 1 -byresi 0 3:-ter 1 -mm 1 Else: set by user")
+@click.option("--rmsd_max", default=5.0, type=float,
+              help="Maximal RMSD for the superposition Maximal RMSD (same family)")
+def main(input, output, output_dir, p_over_protein, p_ide_protein, p_over_family, p_ide_family, rmsd_same, mode, rmsd_max):
     """This funciton accepts a list of pdb ids and finds the best match for each one from the database.
     It first runs the alignment by sequence and then by structure for the best match.
     It then writes the results into a results directory."""
@@ -157,10 +175,10 @@ def main(input, output, output_dir):
     command = f"makeblastdb -in {db_fasta} -dbtype prot -out {db_path}"
     res = subprocess.run(command, shell=True, capture_output=True, text=True)
     # Log everything and capture any errors
-    print(res.stdout)
+    # print(res.stdout)
     logger.info(res.stdout)
     if res.stderr:
-        print(res.stderr)
+        # print(res.stderr)
         logger.warning(res.stderr)
         
     # Now we can run the sequence alignment
@@ -169,15 +187,16 @@ def main(input, output, output_dir):
     command = f'blastp -query {new_fasta} -db {db_path} -outfmt "6 qseqid sseqid pident length" -out {output_path}'
     res = subprocess.run(command, shell=True, capture_output=True, text=True)
     # Print logs and capture any errors
-    print(res.stdout)
+    # print(res.stdout)
     logger.info(res.stdout)
     if res.stderr:
-        print(res.stderr)
+        # print(res.stderr)
         logger.warning(res.stderr)
     
     # Finally, we can run the structure alignment
     align_sequences(output_dir, logger)
-    align_structures.align_structures(output_dir, logger)
+    align_structures.align_structures(output_dir, logger, p_over_protein, p_ide_protein,
+                                      p_over_family, p_ide_family, rmsd_same, mode, rmsd_max)
     
     
     
