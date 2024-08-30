@@ -10,54 +10,29 @@ import concurrent.futures
 import psutil
 import queue
 import threading
-import argparse
 
 
 import warnings
 warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation with empty or all-NA entries is deprecated.*")
 
 
-def input_parser():
-    '''This function parses the input arguments and sets the parameters for the superposition.
-    It is not used in the final version of the code because the parameters are set in the main function.
-    Using this will cause an error because it will try to parse the arguments from the previous call 
-    of the main function.'''
-    parser = argparse.ArgumentParser(
-        description='Superposition OPM structures')
-    # Lists of reference and target structures as pdbids
-    parser.add_argument('--reference_list', type=str, required=False, const=None,
-                        help='List of reference structures', default='reference_pdb.csv')
-    parser.add_argument('--target_list', type=str, required=False, const=None,
-                        help='List of target structures', default='list_pdb')
-    # Custom path to USalign executable
-    parser.add_argument('--usalign', type=str, required=False, const=None,
-                        help='Path to USalign executable', default='script/USalign')
-    # Parameters for classification
-    parser.add_argument('--P_over_protein', type=float, required=False, const=None,
-                        help='Minimal percentage of overlapped residues in the superposition (same protein)', default=95)
-    parser.add_argument('--P_ide_protein', type=float, required=False, const=None,
-                        help='Minimal percentage of identity (same protein)', default=98)
-    parser.add_argument('--P_over_family', type=float, required=False, const=None,
-                        help='Minimal percentage of overlapped residues in the superposition (same family)', default=25)
-    parser.add_argument('--P_ide_family', type=float, required=False, const=None,
-                        help='Minimal percentage of identity (same family)', default=50)
-    parser.add_argument('--rmsd_same',  type=float, required=False, const=None,
-                        help='Maximal RMSD of the superposition (A)', default=1.0)
-    parser.add_argument('--mode', '-m', type=str, required=False, const=None, 
-                        help='Mode of superposition\n 1: -ter 1 -byresi 1\n 2: -ter 1 -byresi 0\n 3:-ter 1 -mm 1\n Else: set by user', default='3')
-    parser.add_argument('--rmsd_max', type=float, required=False, const=None,
-                        help='Maximal RMSD of the superposition (A)', default=5.0)
-    
-    return parser.parse_args()
-
-
 # Perform superposition using USalign
 # Iterate over the elements of target_list
-def run_align(pdb_folder, options, target, ref):
+def run_align(pdb_folder, options, target, ref, logger):
     # Run USalign and get the output
-    pipe = os.popen(f'./USalign {pdb_folder}/{target}.cif {pdb_folder}/{ref}.cif -outfmt 1 {options} 2>/dev/null')
+    # print(f"in directory {os.getcwd()}")
+    # print(pdb_folder)
+    # logger.warning(f"in directory {os.getcwd()}")
+    path2usalign = "/Users/alexeykovalenko/Desktop/lomize/Lehigh_branch/lomize-opm/opm_align/USalign"
+    pipe = os.popen(f'{path2usalign} {pdb_folder}/{target}.cif {pdb_folder}/{ref}.cif -outfmt 1 {options} 2>/dev/null')
+    
+    # path2usalign = "/Users/alexeykovalenko/Desktop/lomize/Lehigh_branch/lomize-opm/opm_align/USalign"
+    # command = f'{path2usalign} {pdb_folder}/{target}.cif {pdb_folder}/{ref}.cif -outfmt 1 {options} 2>/dev/null'
+    # logger.info(f"Running USalign with command: {command}")
+    # result = os.popen(command).read()
+    # logger.info(f"USalign output: {result}")
+    
     output_splits = pipe.read()
-    print(output_splits)
     pipe.close()
     result_df_1 = pd.DataFrame(columns=['PDB_ID_1', 'chain_1', 'PDB_ID_2', 
                                   'chain_2', 'length_1', 'length_2', 
@@ -71,8 +46,11 @@ def run_align(pdb_folder, options, target, ref):
     # Search for the pattern in the output of USalign
     for result in re.finditer(pattern, output_splits):
         if result is None:
-            print(f'US align failure for {target} and {ref}:')
-            print(output_splits)
+            # no print in the webtool version
+            # print(f'US align failure for {target} and {ref}:')
+            logger.warning(f'US align failure for {target} and {ref}:')
+            logger.error(f'US align failure for {target} and {ref}:')
+            # print(output_splits)
             if not sys.stdout.isatty():
                 sys.stdout.flush()
             continue
@@ -134,7 +112,7 @@ results_queue = queue.Queue()
 all_tasks_done = threading.Event()
 
 # Function to write results to file
-def write_results_to_file(output_dir):
+def write_results_to_file(output_dir, number, totl):
     while not all_tasks_done.is_set() or not results_queue.empty():
         try:
             #dframe = pd.DataFrame(['PDB_tar', 'chain_tar', 'PDB_ref', 'chain_ref', 'type', 'N_over', 'P_over', 'P_seqide', 'RMSD', 'P_ide_1', 'P_ide_2'])
@@ -143,6 +121,8 @@ def write_results_to_file(output_dir):
             resultat.to_csv(f'{output_dir}/results.csv', mode='a', header=False, index=False)
 
             results_queue.task_done()
+            number += 1
+            print("Progress: ", number, " out of ", totl)
         except queue.Empty:
             continue
 
@@ -150,28 +130,8 @@ def write_results_to_file(output_dir):
 def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_over_family=25,
                     P_ide_family=50, rmsd_same=2.0, mode='3', rmsd_max=5.0):
     """Align the structures using the superposition algorithm."""
-    print(f"Mode: {mode}")
-    # This function is needed to parse the input arguments and set the parameters for the superposition
-    # But it is not needed in the final version of the code because the parameters are set in the main function
-    # args = input_parser()
-    exe = "USalign"
-    
-    # P_over_protein = args.P_over_protein
-    # P_over_family = args.P_over_family
-    # P_ide_protein = args.P_ide_protein
-    # P_ide_family = args.P_ide_family
-    # rmsd_same = args.rmsd_same
-    # rmsd_max = args.rmsd_max
-    # mode = args.mode
-    
-    
+
     start_time = time.time()
-    # Check if Executable USalign is present
-    if os.path.isfile(exe) is False:
-        print(f"Error: {exe} is not found.")
-        logger.warning(f"Error: {exe} is not found.")
-        logger.error(f"Error: {exe} is not found.")
-        sys.exit(1)
     
     # Set USalign options
     if mode == '1':
@@ -179,7 +139,6 @@ def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_
     elif mode == '2':
         options = '-ter 1 -byresi 0'
     elif mode == '3':
-        print('Mode 3')
         options = '-ter 1 -mm 1'
     else:
         options = mode
@@ -204,11 +163,13 @@ def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_
             try:
                 urllib.request.urlretrieve('https://files.rcsb.org/download/'+pdb+'.cif', f'{pdb_folder}/{pdb}.cif')
             except:
-                print('\033[91m'+'Error: '+pdb+' does not exist on RCSB'+'\033[0m')
+                # print('\033[91m'+'Error: '+pdb+' does not exist on RCSB'+'\033[0m')
+                logger.warning(f"Error: {pdb} does not exist on RCSB")
                 target_list = target_list[target_list != pdb]
                 ref_list = ref_list[ref_list != pdb]
             continue
-    print('\033[92m'+'All mmCIF files are downloaded.'+'\033[0m')
+    # print('\033[92m'+'All mmCIF files are downloaded.'+'\033[0m')
+    logger.info('All mmCIF files are downloaded.')
     
     # Create an empty data frame to store the results
     result_df = pd.DataFrame(columns=['PDB_ID_1', 'chain_1', 'PDB_ID_2', 
@@ -226,11 +187,13 @@ def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_
     
     
     # Start the writer thread
-    writer_thread = threading.Thread(target=write_results_to_file, args=(output_dir,))
+    max_num = len(target_list)
+    number = 0
+    writer_thread = threading.Thread(target=write_results_to_file, args=(output_dir, number, max_num))
     writer_thread.start()
     
     # Create a single tqdm progress bar to track overall progress
-    overall_progress = tqdm(total=len(target_list), desc='Processing references', leave=False)
+    # overall_progress = tqdm(total=len(target_list), desc='Processing references', leave=False)
 
     # Create a single tqdm progress bar to track overall progress
     if os.path.isfile(f'{output_dir}/results.csv'):
@@ -240,9 +203,9 @@ def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_
 
     # Count the total number of references
     def process_reference(target, ref, seq_ide_blast, length_blast):
-        print(f'Processing {target} and {ref}, seq_ide_blast: {seq_ide_blast}, length_blast: {length_blast}')
-        print(options, pdb_folder, target, ref)
-        resultat = run_align(pdb_folder, options, target, ref)
+        # print(f'Processing {target} and {ref}, seq_ide_blast: {seq_ide_blast}, length_blast: {length_blast}')
+        logger.info(f'Processing {target} and {ref}, seq_ide_blast: {seq_ide_blast}, length_blast: {length_blast}')
+        resultat = run_align(pdb_folder, options, target, ref, logger)
         # add the seq_ide_blast to the result
         resultat['seq_ide_blast'] = seq_ide_blast
         resultat['length_blast'] = length_blast
@@ -256,12 +219,14 @@ def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_
             futures.append(executor.submit(process_reference, target, ref, seq_ide_blast, length_blast))
         
         for future in concurrent.futures.as_completed(futures):
-            overall_progress.update(1)
+            # overall_progress.update(1)
+            print("Progress: ", number, " out of ", max_num)
     concurrent.futures.wait(futures)
     all_tasks_done.set()
     writer_thread.join() 
             
-    print('\033[92m'+f'Finished superpositioning using USalign in {time.time() - start_time:.2f} seconds.'+'\033[0m')
+    # print('\033[92m'+f'Finished superpositioning using USalign in {time.time() - start_time:.2f} seconds.'+'\033[0m')
+    logger.info(f'Finished superpositioning using USalign in {time.time() - start_time:.2f} seconds.')
 
     sys.stdout.flush()
 
@@ -292,7 +257,9 @@ def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_
     try:
         selection_df = selection_df[selection_df['type'] != 0]
     except:
-        print('No matches found. Check the parameters and results.csv file.')
+        # print('No matches found. Check the parameters and results.csv file.')
+        logger.warning('No matches found. Check the parameters and results.csv file.')
+        logger.info('No matches found. Check the parameters and results.csv file.')
 
     # for each chain_1 in the selection_df, delete the ':' and get length of the string
     if mode == '3':
@@ -320,6 +287,7 @@ def align_structures(output_dir, logger, P_over_protein=95, P_ide_protein=98, P_
         selection_df = selection_df.drop_duplicates(subset=['PDB_tar', 'chain_tar', 'type'], keep='first')
     # Drop values that are not the minimum RMSD
     selection_df.to_csv(f'{output_dir}/top_matches.csv', index=False)
-    print('\033[92m'+f'Finished classifying matches in {time.time() - classifier_time:.2f} seconds.'+'\033[0m')
+    # print('\033[92m'+f'Finished classifying matches in {time.time() - classifier_time:.2f} seconds.'+'\033[0m')
+    logger.info(f'Finished classifying matches in {time.time() - classifier_time:.2f} seconds.')
         
 #align_structures('results', 'logger')
