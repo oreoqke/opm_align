@@ -1,6 +1,7 @@
 import click
 import os
 import logging
+import shutil
 import get_all_fasta
 import get_all_pdbid
 import subprocess
@@ -32,67 +33,68 @@ def align_sequences(output_dir, logger):
     # read in the data frame from the alignment
     file_path = os.path.join(output_dir, "result.csv")
     df = pd.read_csv(file_path, header=None, sep="\t")
-    # I'm using aligment score as the similarity measure, so I know which 3d structures
-    # are likely to be most similar. I will try to find the best match from any subunit to any subunit
-    # of the target protein.
-    df = df.map(lambda x: x.upper() if isinstance(x, str) else x)
-    
-    # cuts off everything except for the pdb id and the subunit
-    df = df.map(lambda x: x.split('|')[0] if isinstance(x, str) else x)
+
+    # Combined transformation: uppercase and split on '|' in single pass (Phase 2.3)
+    def transform_cell(x):
+        if isinstance(x, str):
+            return x.upper().split('|')[0]
+        return x
+
+    df = df.map(transform_cell)
+
+    # Pre-compute truncated version (first 4 chars) for PDB ID matching
+    # This avoids repeated .map() calls in the loop
+    df_truncated = df.map(lambda x: x[:4] if isinstance(x, str) else x)
 
     # For each target value, get the best match
     to_align = []
-    targets = open(os.path.join(output_dir, "new_pdb.txt"), "r").read().splitlines()
-    
+    with open(os.path.join(output_dir, "new_pdb.txt"), "r") as f:
+        targets = f.read().splitlines()
+
     # Convert all targets to uppercase to match the dictionary
     upper_targets = [target.upper() for target in targets]
-    
+
     # Get the transmembrane subunit with the most transmembrane regions
-    longest_subs = tr.longest_sub(targets)        
-    
+    longest_subs = tr.longest_sub(targets)
+
     # Filter the data frame for the best match for each target
     for target in upper_targets:
-        # If the target does not have any transmembrane regions, we only filter by the 
+        # If the target does not have any transmembrane regions, we only filter by the
         # sequence alignment score
-        # TODO: I am not sure if this would ever be the case. Need to be tested
         if target not in longest_subs:
-            filtered_df = df.map(lambda x: x[:4] if isinstance(x, str) else x)
-            filtered_df = filtered_df[filtered_df[0] == target]
+            filtered_df = df_truncated[df_truncated[0] == target].copy()
         # Take the subunit with the most transmembrane regions and drop other ones from the data frame
         else:
             memb_subunit = longest_subs[target]["subunit"]
             if memb_subunit is not None:
-                filtered_df = df[df[0] == f"{target}_{memb_subunit}"]
+                # Filter by full identifier first, then truncate
+                filtered_df = df[df[0] == f"{target}_{memb_subunit}"].copy()
                 filtered_df = filtered_df.map(lambda x: x[:4] if isinstance(x, str) else x)
                 print(f"Filtering for {target}_{memb_subunit}")
-                print(filtered_df)
-            # If the target does not have any transmembrane regions, we only filter by the 
+            # If the target does not have any transmembrane regions, we only filter by the
             # sequence alignment score
             else:
-                filtered_df = df.map(lambda x: x[:4] if isinstance(x, str) else x)
-                print(filtered_df)
-                filtered_df = filtered_df[filtered_df[0] == target]
-                print(f"Filtering for {target}_{memb_subunit}")
-                print(filtered_df)
-                
+                filtered_df = df_truncated[df_truncated[0] == target].copy()
+                print(f"Filtering for {target} (no transmembrane subunit)")
+
         # Drop duplicates if there are any
         # This might happen if we don't have any information about the subunit
         filtered_df = filtered_df.drop_duplicates()
         filtered_df = filtered_df.sort_values(by=2, ascending=False)
-        
+
         # Write a helpful message that no matches were found
         if filtered_df.empty:
             print(f"No match found for {target} by BLAST")
             logger.warning(f"No match found for {target} by BLAST")
             write_bad_match(output_dir, f"{target} No match found by BLAST")
             continue
-        i = 0
+
         # This loop will determine the pairs for which to run the alignment
-        while filtered_df.shape[0] !=i and criteria_for_usalign(output_dir, filtered_df, i):
-            print(filtered_df.iloc[i])
+        i = 0
+        while i < filtered_df.shape[0] and criteria_for_usalign(output_dir, filtered_df, i):
             to_align.append(filtered_df.iloc[i])
             i += 1
-    
+
     with open(os.path.join(output_dir, "to_align.txt"), "w") as f:
         for line in to_align:
             f.write(f"{line[0]} {line[1]} {line[2]} {line[3]}\n")
@@ -134,8 +136,7 @@ def main(input, output, output_dir):
     new_fasta = os.path.join(output_dir, "new_fasta.txt")
     get_all_fasta.get_fasta(input, new_fasta, logger)
     # Copy the input file to the output directory
-    cmd = f"cp {input} {os.path.join(output_dir, 'new_pdb.txt')}"
-    subprocess.run(cmd, shell=True)
+    shutil.copy(input, os.path.join(output_dir, 'new_pdb.txt'))
     
     # if you don't provide a reference list, it will take all the ids from
     # the existing opm database

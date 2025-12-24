@@ -5,7 +5,9 @@ import sys
 import pandas as pd
 from tqdm import tqdm
 import urllib.request
+import urllib.error
 import re
+import shutil
 import concurrent.futures
 import psutil
 import queue
@@ -13,8 +15,40 @@ import threading
 import argparse
 
 
+import subprocess
+
 import warnings
 warnings.filterwarnings("ignore", message="The behavior of DataFrame concatenation with empty or all-NA entries is deprecated.*")
+
+# Cache for USalign executable path
+_usalign_path = None
+
+
+def find_usalign():
+    """Find USalign executable. Searches PATH first, then local directories."""
+    global _usalign_path
+    if _usalign_path is not None:
+        return _usalign_path
+
+    # Search candidates: PATH first, then local directories
+    candidates = [
+        'USalign',                          # In PATH
+        os.path.join('.', 'USalign'),       # Current directory
+        os.path.join('script', 'USalign'),  # script/ subdirectory
+    ]
+
+    for candidate in candidates:
+        # Check if it's in PATH
+        found = shutil.which(candidate)
+        if found:
+            _usalign_path = found
+            return _usalign_path
+        # Check if it's a local file
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            _usalign_path = os.path.abspath(candidate)
+            return _usalign_path
+
+    return None
 
 
 def input_parser():
@@ -47,25 +81,50 @@ def input_parser():
     return parser.parse_args()
 
 
+# Column names for result DataFrame
+RESULT_COLUMNS = ['PDB_ID_1', 'chain_1', 'PDB_ID_2', 'chain_2', 'length_1', 'length_2',
+                  'TM-score_1', 'TM-score_2', 'd0_1', 'd0_2', 'RMSD', 'Lali',
+                  'seqid_1', 'seqid_2', 'seqid_ali', 'N_over', 'N_ide', 'P_over',
+                  'P_seqide', 'P_ide_1', 'P_ide_2', 'Nsub_over']
+
+
 # Perform superposition using USalign
 # Iterate over the elements of target_list
 def run_align(pdb_folder, options, target, ref):
-    # Run USalign and get the output
-    pipe = os.popen(f'./USalign {pdb_folder}/{target}.cif {pdb_folder}/{ref}.cif -outfmt 1 {options} 2>/dev/null')
-    output_splits = pipe.read()
-    pipe.close()
-    result_df_1 = pd.DataFrame(columns=['PDB_ID_1', 'chain_1', 'PDB_ID_2', 
-                                  'chain_2', 'length_1', 'length_2', 
-                                  'TM-score_1', 'TM-score_2', 'd0_1', 'd0_2', 
-                                  'RMSD', 'Lali', 'seqid_1', 'seqid_2','seqid_ali', 
-                                  'N_over', 'N_ide', 'P_over', 'P_seqide', 'P_ide_1', 
-                                  'P_ide_2', 'Nsub_over'])
+    # Build file paths
+    target_cif = os.path.join(pdb_folder, f'{target}.cif')
+    ref_cif = os.path.join(pdb_folder, f'{ref}.cif')
+
+    # Find USalign executable
+    usalign_exe = find_usalign()
+    if usalign_exe is None:
+        print(f'\033[91mError: USalign executable not found\033[0m')
+        return pd.DataFrame(columns=RESULT_COLUMNS)
+
+    # Run USalign using subprocess (cross-platform)
+    cmd = [usalign_exe, target_cif, ref_cif, '-outfmt', '1'] + options.split()
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        output_splits = result.stdout
+    except subprocess.TimeoutExpired:
+        print(f'\033[91mUSalign timeout for {target} and {ref}\033[0m')
+        return pd.DataFrame(columns=RESULT_COLUMNS)
+    except Exception as e:
+        print(f'\033[91mUSalign error for {target} and {ref}: {e}\033[0m')
+        return pd.DataFrame(columns=RESULT_COLUMNS)
+
     # Define a pattern to search for the desired information
-    pattern = fr'>{pdb_folder}/{target}.cif:(\S+)\s+L=(\S+)\s+d0=(\d+\.\d+)\s+seqID=(\d+\.\d+)\s+TM-score=(\d+\.\d+)\n(\S+)\n>{pdb_folder}/{ref}.cif:(\S+)\s+L=(\S+)\s+d0=(\d+\.\d+)\s+seqID=(\d+\.\d+)\s+TM-score=(\d+\.\d+)\n(\S+)\n# Lali=(\d+)\s+RMSD=(\d+\.\d+)\s+seqID_ali=(\d+\.\d+)'
-    
+    # Use re.escape for the file paths to handle special characters
+    target_cif_escaped = re.escape(target_cif)
+    ref_cif_escaped = re.escape(ref_cif)
+    pattern = fr'>{target_cif_escaped}:(\S+)\s+L=(\S+)\s+d0=(\d+\.\d+)\s+seqID=(\d+\.\d+)\s+TM-score=(\d+\.\d+)\n(\S+)\n>{ref_cif_escaped}:(\S+)\s+L=(\S+)\s+d0=(\d+\.\d+)\s+seqID=(\d+\.\d+)\s+TM-score=(\d+\.\d+)\n(\S+)\n# Lali=(\d+)\s+RMSD=(\d+\.\d+)\s+seqID_ali=(\d+\.\d+)'
+
+    # Collect rows in a list first (O(n) instead of O(n²) with concat in loop)
+    rows = []
+
     # Search for the pattern in the output of USalign
-    for result in re.finditer(pattern, output_splits):
-        if result is None:
+    for match in re.finditer(pattern, output_splits):
+        if match is None:
             print(f'US align failure for {target} and {ref}:')
             print(output_splits)
             if not sys.stdout.isatty():
@@ -73,31 +132,31 @@ def run_align(pdb_folder, options, target, ref):
             continue
 
         # Extract the information from the match
-        chain_1 = result.group(1)
-        l_1 = int(result.group(2))
-        d0_1 = float(result.group(3))
-        seqid_1 = float(result.group(4))
-        score_1 = float(result.group(5))
-        seq_1 = result.group(6)
-        chain_2 = result.group(7)
-        l_2 = int(result.group(8))
-        d0_2 = float(result.group(9))
-        seqid_2 = float(result.group(10))
-        score_2 = float(result.group(11))
-        seq_2 = result.group(12)
-        Lali = int(result.group(13))
-        rmsd = float(result.group(14))
-        seqid_ali = float(result.group(15))
-            
+        chain_1 = match.group(1)
+        l_1 = int(match.group(2))
+        d0_1 = float(match.group(3))
+        seqid_1 = float(match.group(4))
+        score_1 = float(match.group(5))
+        seq_1 = match.group(6)
+        chain_2 = match.group(7)
+        l_2 = int(match.group(8))
+        d0_2 = float(match.group(9))
+        seqid_2 = float(match.group(10))
+        score_2 = float(match.group(11))
+        seq_2 = match.group(12)
+        Lali = int(match.group(13))
+        rmsd = float(match.group(14))
+        seqid_ali = float(match.group(15))
+
         # Leave if the length of the sequence is less than 20
         if min(l_1, l_2) < 20:
             continue
-            
+
         N_over = 0
         N_identical = 0
         Nsub_over = 0
         star = True
-        
+
         # Calculate the number of residues that are overlapped
         for s1, s2 in zip(seq_1, seq_2):
             if s1 != '*' and s1 != '-' and s2 != '-':
@@ -106,21 +165,26 @@ def run_align(pdb_folder, options, target, ref):
                     N_identical += 1
             if s1 == '*':
                 star = True
-            if star == True and s1 != '-' and s2 != '-' and s1 != '*': 
+            if star and s1 != '-' and s2 != '-' and s1 != '*':
                 Nsub_over += 1
                 star = False
-                    
+
         P_over = round(100 * N_over / min(l_1, l_2))
-        P_seqide = round(100 * N_identical / N_over)
+        P_seqide = round(100 * N_identical / N_over) if N_over > 0 else 0
         rmsd = round(rmsd, 2)
         P_identical_1 = round(100 * N_identical / l_1)
-        P_identical_2 = round(100 * N_identical / l_2)                        
-        
-        # Append the extracted information to the data frame as a new row
-        to_add = pd.DataFrame([[target, chain_1, ref, chain_2, l_1, l_2, score_1, score_2, d0_1, d0_2, rmsd, Lali, seqid_1, seqid_2, seqid_ali, N_over, N_identical, P_over, P_seqide, P_identical_1, P_identical_2, Nsub_over]], columns=result_df_1.columns)
-        result_df_1 = pd.concat([result_df_1, to_add], ignore_index=True)
-    
-    return result_df_1
+        P_identical_2 = round(100 * N_identical / l_2)
+
+        # Collect row data
+        rows.append([target, chain_1, ref, chain_2, l_1, l_2, score_1, score_2,
+                     d0_1, d0_2, rmsd, Lali, seqid_1, seqid_2, seqid_ali,
+                     N_over, N_identical, P_over, P_seqide, P_identical_1,
+                     P_identical_2, Nsub_over])
+
+    # Create DataFrame from collected rows (single allocation)
+    if rows:
+        return pd.DataFrame(rows, columns=RESULT_COLUMNS)
+    return pd.DataFrame(columns=RESULT_COLUMNS)
 
 # Shared queue for results
 results_queue = queue.Queue()
@@ -130,12 +194,13 @@ all_tasks_done = threading.Event()
 
 # Function to write results to file
 def write_results_to_file(output_dir):
+    results_csv_path = os.path.join(output_dir, 'results.csv')
     while not all_tasks_done.is_set() or not results_queue.empty():
         try:
             #dframe = pd.DataFrame(['PDB_tar', 'chain_tar', 'PDB_ref', 'chain_ref', 'type', 'N_over', 'P_over', 'P_seqide', 'RMSD', 'P_ide_1', 'P_ide_2'])
             resultat = results_queue.get(timeout=1)  # Timeout to avoid blocking indefinitely
             #dframe = pd.concat([dframe, resultat])
-            resultat.to_csv(f'{output_dir}/results.csv', mode='a', header=False, index=False)
+            resultat.to_csv(results_csv_path, mode='a', header=False, index=False)
 
             results_queue.task_done()
         except queue.Empty:
@@ -156,12 +221,15 @@ def align_structures(output_dir, logger):
     
     
     start_time = time.time()
-    # Check if Executable USalign is present
-    if os.path.isfile(exe) is False:
-        print(f"Error: {exe} is not found.")
-        logger.warning(f"Error: {exe} is not found.")
-        logger.error(f"Error: {exe} is not found.")
+    # Check if USalign executable is present
+    usalign_exe = find_usalign()
+    if usalign_exe is None:
+        print(f"Error: USalign is not found. Please install it or add to PATH.")
+        logger.warning("Error: USalign is not found.")
+        logger.error("Error: USalign is not found.")
         sys.exit(1)
+    else:
+        print(f"Using USalign: {usalign_exe}")
     
     # Set USalign options
     if mode == '1':
@@ -189,23 +257,19 @@ def align_structures(output_dir, logger):
     # Fetch mmCIF files from RCSB
     for i in tqdm(range(len(all_pdb)), desc='\033[94m'+'Downloading mmCIF files from RCSB' + '\033[0m', disable=None, leave=False):
         pdb = all_pdb[i]
-        if os.path.isfile(f'{pdb_folder}/{pdb}.cif') is False:
+        cif_path = os.path.join(pdb_folder, f'{pdb}.cif')
+        if os.path.isfile(cif_path) is False:
             try:
-                urllib.request.urlretrieve('https://files.rcsb.org/download/'+pdb+'.cif', f'{pdb_folder}/{pdb}.cif')
-            except:
-                print('\033[91m'+'Error: '+pdb+' does not exist on RCSB'+'\033[0m')
+                urllib.request.urlretrieve(f'https://files.rcsb.org/download/{pdb}.cif', cif_path)
+            except (urllib.error.URLError, urllib.error.HTTPError) as e:
+                print(f'\033[91mError: {pdb} does not exist on RCSB ({e})\033[0m')
                 target_list = target_list[target_list != pdb]
                 ref_list = ref_list[ref_list != pdb]
             continue
     print('\033[92m'+'All mmCIF files are downloaded.'+'\033[0m')
     
     # Create an empty data frame to store the results
-    result_df = pd.DataFrame(columns=['PDB_ID_1', 'chain_1', 'PDB_ID_2', 
-                                  'chain_2', 'length_1', 'length_2', 
-                                  'TM-score_1', 'TM-score_2', 'd0_1', 'd0_2', 
-                                  'RMSD', 'Lali', 'seqid_1', 'seqid_2','seqid_ali', 
-                                  'N_over', 'N_ide', 'P_over', 'P_seqide', 'P_ide_1', 
-                                  'P_ide_2', 'Nsub_over', 'seq_ide_blast', 'length_blast'])
+    result_df = pd.DataFrame(columns=RESULT_COLUMNS + ['seq_ide_blast', 'length_blast'])
     
     # if os.path.isfile(os.path.join(output_dir, "result.csv")):
     #     result_df = pd.read_csv(os.path.join(output_dir, "result.csv"), header=None, sep="\t")
@@ -232,10 +296,10 @@ def align_structures(output_dir, logger):
     overall_progress = tqdm(total=len(target_list), desc='Processing references', leave=False)
 
     # Create a single tqdm progress bar to track overall progress
-    if os.path.isfile(f'{output_dir}/results.csv'):
-        cmd = f"rm -f {output_dir}/results.csv"
-        os.system(cmd)
-    result_df.to_csv(f'{output_dir}/results.csv', mode='a', index=False)
+    results_csv_path = os.path.join(output_dir, 'results.csv')
+    if os.path.isfile(results_csv_path):
+        os.remove(results_csv_path)
+    result_df.to_csv(results_csv_path, mode='a', index=False)
 
     # Count the total number of references
     def process_reference(target, ref, seq_ide_blast, length_blast):
@@ -281,14 +345,14 @@ def align_structures(output_dir, logger):
         group['type'] = group.apply(classify_match_helper, axis=1)
         return group
 
-    result_df = pd.concat([result_df,pd.read_csv(f'{output_dir}/results.csv')], ignore_index=True)
+    result_df = pd.concat([result_df, pd.read_csv(results_csv_path)], ignore_index=True)
 
     selection_df = result_df.groupby(['PDB_ID_1', 'chain_1', 'PDB_ID_2', 'chain_2'], group_keys=False).apply(classify_match)
 
     # drop the rows that classified to type 0
     try:
         selection_df = selection_df[selection_df['type'] != 0]
-    except:
+    except KeyError:
         print('No matches found. Check the parameters and results.csv file.')
 
     # for each chain_1 in the selection_df, delete the ':' and get length of the string
@@ -308,15 +372,18 @@ def align_structures(output_dir, logger):
         selection_df.rename(columns = {'PDB_ID_1': 'PDB_tar','PDB_ID_2': 'PDB_ref', 'chain_1': 'chain_tar', 'chain_2': 'chain_ref'}, inplace=True)
         selection_df = selection_df[['PDB_tar', 'chain_tar', 'PDB_ref', 'chain_ref', 'type', 'N_over', 'P_over', 'P_seqide', 'RMSD', 'P_ide_1', 'P_ide_2']]
         
-    selection_df.to_csv(f'{output_dir}/selection.csv', index=False)
+    selection_csv_path = os.path.join(output_dir, 'selection.csv')
+    top_matches_csv_path = os.path.join(output_dir, 'top_matches.csv')
+
+    selection_df.to_csv(selection_csv_path, index=False)
     if mode == '3':
         selection_df.groupby(['PDB_tar', 'PDB_ref', 'type'])['RMSD'].idxmin()
         selection_df = selection_df.drop_duplicates(subset=['PDB_tar', 'type'], keep='first')
-    else: 
+    else:
         selection_df.groupby(['PDB_tar', 'chain_tar', 'PDB_ref', 'type'])['RMSD'].idxmin()
         selection_df = selection_df.drop_duplicates(subset=['PDB_tar', 'chain_tar', 'type'], keep='first')
     # Drop values that are not the minimum RMSD
-    selection_df.to_csv(f'{output_dir}/top_matches.csv', index=False)
+    selection_df.to_csv(top_matches_csv_path, index=False)
     print('\033[92m'+f'Finished classifying matches in {time.time() - classifier_time:.2f} seconds.'+'\033[0m')
         
 #align_structures('results', 'logger')
